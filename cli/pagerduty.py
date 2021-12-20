@@ -69,39 +69,58 @@ class PagerDuty:
         # need: starttime, endtime, startdate, repeatuntil, days, rotation type
         # possibly primary/backup members
         # Q: how do we define backup members?
-        schedules = {}
+        schedules = []
         for schedule in self.get_data_for_category("schedules"):
             details = self.session.rget(f"schedules/{schedule['id']}")
-            schedules[schedule["id"]] = {
-                "name": schedule["name"],
-                "id": schedule["id"],
-                "timeZone": schedule["time_zone"],
-                "primaryMembers": [user["id"] for user in schedule["users"]],
-                "schedule_layers": details['schedule_layers'],
-                "teams": details['teams']
-            }
+            schedules.append(
+                {
+                    "name": schedule["name"],
+                    "id": schedule["id"],
+                    "timeZone": schedule["time_zone"],
+                    "primaryMembers": [user["id"] for user in schedule["users"]],
+                    "schedule_layers": details["schedule_layers"],
+                    "teams": details["teams"],
+                }
+            )
         return schedules
 
     def get_all_escalations(self):
         # Q: How do we handle a schedule with multiple teams?
-        escalations = {}
+        escalations = []
         for escalation in self.get_data_for_category("escalation_policies"):
-            escalations[escalation["id"]] = {
-                "id": escalation["id"],
-                "rules": escalation["escalation_rules"],
-                "teams": escalation["teams"],
-                "name": escalation["name"]
-            }
+            escalations.append(
+                {
+                    "id": escalation["id"],
+                    "rules": escalation["escalation_rules"],
+                    "teams": escalation["teams"],
+                    "name": escalation["name"],
+                }
+            )
         return escalations
 
     def get_team_members(self):
         for config in self.teams:
             config["members"] = []
+            config["manager"] = ""
+            # There may be multiple managers
+            managers = []
             members = self.session.rget(f'teams/{config["id"]}/members')
             for member in members:
                 config["members"].append(member["user"]["id"])
                 if member["role"] == "manager":
-                    config["manager"] = member["user"]["id"]
+                    managers.append(
+                        {
+                            "user": self.session.rget(f'/users/{member["user"]["id"]}')[
+                                "email"
+                            ],
+                            "id": member["user"]["id"],
+                        }
+                    )
+            if len(managers) > 1:
+                print(
+                    f"Multiple managers found for team '{config['name']}', selecting {managers[0]['user']} as manager"
+                )
+                config["manager"] = managers[0]["id"]
 
     def get_service_data(self):
         # Q: how do we handle a service with multiple teams?
@@ -110,6 +129,6 @@ class PagerDuty:
             config["team"] = service["teams"]
 
 
-pd = PagerDuty("u+CYnCRVp2Wu3Zctvp8g")
-pd.get_team_members()
-print("")
+# pd = PagerDuty("u+Y33RtpsQusiBajGnQg")
+# pd.get_team_members()
+# print("")

@@ -17,14 +17,14 @@ class AIR:
     def post_request(self, url, payload):
         try:
             response = requests.request("POST", url, headers=self.headers, data=payload)
-            return response
+            return response.status_code, response.json()
         except requests.exceptions.RequestException as e:
-            return e
+            raise e
 
     def create_user(self, payload):
         url = f"{self.url}/api/now/ir/user"
         response = self.post_request(url, json.dumps(payload))
-        return response.json()
+        return response
 
     def create_team(self, payload):
         url = f"{self.url}/api/now/ir/team"
@@ -37,12 +37,12 @@ class AIR:
         response = self.post_request(url, payload)
         return response
 
-    def create_team(self, payload):
+    def create_service(self, payload):
         url = f"{self.url}/api/now/ir/service"
         response = self.post_request(url, json.dumps(payload))
         return response
 
-    def create_team(self, payload):
+    def create_shift(self, payload):
         url = f"{self.url}/api/now/ir/shift"
         response = self.post_request(url, json.dumps(payload))
         return response
