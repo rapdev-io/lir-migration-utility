@@ -2,7 +2,9 @@ from air import AIR
 from pagerduty import PagerDuty
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
-from pprint import pprint
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Mapper:
@@ -26,11 +28,11 @@ class Mapper:
             else:
                 code, json = self.air.create_user(user)
                 if "error" in json:
-                    print(
+                    logger.error(
                         f'Attempted to create user "{user["emailAddress"]}"; received response code {code} and error "{json["message"]}"'
                     )
                     continue
-                print(
+                logger.info(
                     f'Created user for "{user["emailAddress"]}"; sysId "{json["sysId"]}"'
                 )
                 self.users[pd_id] = json["sysId"]
@@ -49,50 +51,90 @@ class Mapper:
             team_id = team.pop("id")
             team["members"] = self.team_members.get(team_id).get("members")
             team["manager"] = self.team_members.get(team_id).get("manager")
-            team["teamState"] = 'complete'
+            team["teamState"] = "complete"
             if self.noop:
                 team["name"] = f"noop - {team['name']}"
                 team["sysId"] = f"noop - pd team {team_id}"
             else:
                 code, json = self.air.create_team(team)
                 if "error" in json:
-                    print(
+                    logger.error(
                         f'Attempted to create team "{team["name"]}"; received response code {code} and error message "{json["message"]}"'
                     )
                     continue
                 team["sysId"] = json["sysId"]
-                print(f'Created team "{team["name"]}" with sysId {json["sysId"]}')
+                logger.info(f'Created team "{team["name"]}" with sysId {json["sysId"]}')
             self.teams[team_id] = team
+
+    def create_team_from_escal_policy(self, escal_id, name):
+        members = []
+        escal = self.pd.get_details(f"escalation_policies/{escal_id}")
+        for rule in escal["escalation_rules"]:
+            for target in rule["targets"]:
+                if target["type"] == "user_reference":
+                    members.append(self.users.get(target["id"]))
+        team_name = f"{name} (service based team)"
+        payload = {
+            "members": members,
+            "teamState": "complete",
+            "name": team_name,
+            "description": f"Team inferred from escalation policy of service {name}",
+        }
+        code, json = self.air.create_team(payload)
+        if "error" in json:
+            logger.error(
+                f'Attempted to create team for service {name}; received response code {code} and error message "{json["message"]}"'
+            )
+            return None
+        logger.info(
+            f'Created team "{team_name}" from escalation policywith sysId {json["sysId"]}'
+        )
+        return json
 
     def map_services(self):
         for service in self.pd.services:
             service_teams = service.pop("teams")
             if not service_teams:
-                self.services[service["id"]] = {
-                    "name": f"{service['name']} (No Team Assigned)",
-                    "description": service["description"],
-                }
+                service_details = self.pd.get_details(f"services/{service['id']}")
+                if service_details.get("escalation_policy").get("id"):
+                    resp = self.create_team_from_escal_policy(
+                        service_details["escalation_policy"]["id"], service["name"]
+                    )
+                    if resp:
+                        self.services[service["id"]] = {
+                            "name": f"{service['name']}",
+                            "description": service["description"],
+                            "team": resp["sysId"],
+                        }
+                else:
+                    logger.info(
+                        f'There is no escalation policy associated with service "{service["name"]}" - cannot infer team members. Creating service without team.'
+                    )
+                    self.services[service["id"]] = {
+                        "name": f"{service['name']} (No Team Assigned)",
+                        "description": service["description"],
+                    }
             for team in service_teams:
                 self.services[service["id"]] = {
                     "name": f"{service['name']} ({self.teams.get(team['id']).get('name')})",
-                    "team": self.teams.get(team["id"]).get("name"),
+                    "team": self.teams.get(team["id"]).get("sysId"),
                     "description": service["description"],
                 }
             if not self.noop:
                 code, json = self.air.create_service(self.services[service["id"]])
                 if "error" in json:
-                    print(
+                    logger.error(
                         f'Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
                     )
                     continue
-                print(
+                logger.info(
                     f'Created service "{service["name"]}" with sysId {json["sysId"]}"'
                 )
 
     def map_schedules(self):
         for sched in self.pd.schedules:
             if not sched["teams"]:
-                print(
+                logger.warning(
                     f'Schedule {sched["name"]} does not have an associated team and cannot be migrated.'
                 )
                 continue
@@ -107,7 +149,9 @@ class Mapper:
                         "startDate": parse(layer["start"]).strftime("%Y-%m-%d"),
                         "endTime": parse(layer["start"]).strftime("%H:%M")
                         if layer["end"]
-                        else (parse(layer["start"]) + relativedelta(hours=12)).strftime("%H:%M"),
+                        else (parse(layer["start"]) + relativedelta(hours=12)).strftime(
+                            "%H:%M"
+                        ),
                         "repeatUntil": parse(layer["start"]).strftime("%Y-%m-%d")
                         if layer["end"]
                         else (parse(layer["start"]) + relativedelta(years=5)).strftime(
@@ -117,7 +161,6 @@ class Mapper:
                             layer["rotation_turn_length_seconds"], "weekly"
                         ),
                         "timeZone": sched["timeZone"],
-                        # Can only include members that are part of the team assigned to the shift
                         "primaryMembers": [
                             self.users.get(user["user"]["id"])
                             for user in layer["users"]
@@ -132,18 +175,18 @@ class Mapper:
                 if not self.noop:
                     code, json = self.air.create_shift(schedule)
                     if "error" in json:
-                        print(
+                        logger.error(
                             f'Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
                         )
                         continue
-                    print(
+                    logger.info(
                         f'Created shift "{sched["name"]}" with sysId "{json["sysId"]}"'
                     )
 
     def map_escalations(self):
         for escal in self.pd.escalations:
             if not escal["teams"]:
-                print(
+                logger.warning(
                     f'Escalation policy "{escal["name"]}" is not associated with a team and cannot be migrated'
                 )
                 continue
@@ -168,7 +211,7 @@ class Mapper:
                                 }
                             )
                         else:
-                            print(
+                            logger.warning(
                                 f'Cannot migrate target type {target["type"]} for step {rule_index} in escalation {escal["name"]}'
                             )
                             continue
@@ -177,8 +220,8 @@ class Mapper:
                         steps.append(step)
                         escalation["steps"] = steps
                     else:
-                        print(
-                            f'No audience for rule {rule_index} in escalation "{escal["name"]}"'
+                        logger.warning(
+                            f'No audience for rule {rule_index} in escalation "{escal["name"]} - skipping layer."'
                         )
                     rule_index += 1
             if "steps" in escalation:
@@ -187,17 +230,17 @@ class Mapper:
                 ]
                 self.escalations[escal["id"]] = escalation
             else:
-                print(
+                logger.warning(
                     f'No steps found or no audience found for escalation "{escal["name"]}" - cannot migrate.'
                 )
             if not self.noop:
                 code, json = self.air.create_escalation(escalation)
                 if "error" in json:
-                    print(
+                    logger.error(
                         f'Attempted to create escalation "{escal["name"]}"; received response code {code} and error "{json["message"]}"'
                     )
                     continue
-                print(
+                logger.info(
                     f'Created escalation "{escal["name"]}" with sysId {json["sysId"]}'
                 )
 
@@ -222,26 +265,3 @@ class Mapper:
         for pd_id, escal in self.escalations.items():
             print(f"From PD Escalation policy {pd_id}:")
             print(escal)
-
-
-m = Mapper(
-    "271c720c1bdc099041654081b24bcb4e1234567890ab",
-    "https://airworkertest3.service-now.com",
-    "u+Y33RtpsQusiBajGnQg",
-    noop=False,
-)
-
-m.map_and_create_users()
-m.map_team_members()
-m.map_teams()
-m.map_services()
-m.map_schedules()
-m.map_escalations()
-m.noop_output()
-print("")
-
-
-# based on the service, create a virtual team based on the assigned users
-# based on the shift, add all users present in a layer at the primary members only if there is a team associated with the shift
-# for escalation policies, only create the escalation if there is a team associatied
-# if there are not teams associatied with a shift or escalation, log a warning that the migration could not be completed

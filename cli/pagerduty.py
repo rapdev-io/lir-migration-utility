@@ -1,5 +1,7 @@
-from pdpyras import APISession
-import json
+from pdpyras import APISession, PDClientError
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PagerDuty:
@@ -13,7 +15,13 @@ class PagerDuty:
         self.escalations = self.get_all_escalations()
 
     def get_data_for_category(self, category):
-        return [data for data in self.session.iter_all(category)]
+        logger.debug(f"Getting data for category {category}.")
+        try:
+            response = [data for data in self.session.iter_all(category)]
+        except PDClientError as e:
+            logger.error(f"Error from PagerDuty API: {e}")
+            return []
+        return response
 
     def get_all_users(self):
         """Returns a dictionary of all users in the target PagerDuty account.
@@ -38,6 +46,7 @@ class PagerDuty:
                     "bio": user["description"],
                 }
             )
+        logger.debug(f"Gathered the following users: {users}")
         return users
 
     def get_all_teams(self):
@@ -50,6 +59,7 @@ class PagerDuty:
                     "description": team["description"],
                 }
             )
+        logging.debug(f"Gathered the following teams: {teams}")
         return teams
 
     def get_all_services(self):
@@ -63,12 +73,18 @@ class PagerDuty:
                     "name": service["name"],
                 }
             )
+        logging.debug(f"Gathered the following services: {services}")
         return services
 
+    def get_details(self, endpoint):
+        try:
+            response = self.session.rget(endpoint)
+            return response
+        except PDClientError as e:
+            logger.error(f"Request to endpont {endpoint} failed: {e}")
+            return {}
+
     def get_all_schedules(self):
-        # need: starttime, endtime, startdate, repeatuntil, days, rotation type
-        # possibly primary/backup members
-        # Q: how do we define backup members?
         schedules = []
         for schedule in self.get_data_for_category("schedules"):
             details = self.session.rget(f"schedules/{schedule['id']}")
@@ -85,7 +101,6 @@ class PagerDuty:
         return schedules
 
     def get_all_escalations(self):
-        # Q: How do we handle a schedule with multiple teams?
         escalations = []
         for escalation in self.get_data_for_category("escalation_policies"):
             escalations.append(
@@ -117,18 +132,7 @@ class PagerDuty:
                         }
                     )
             if len(managers) > 1:
-                print(
+                logger.info(
                     f"Multiple managers found for team '{config['name']}', selecting {managers[0]['user']} as manager"
                 )
                 config["manager"] = managers[0]["id"]
-
-    def get_service_data(self):
-        # Q: how do we handle a service with multiple teams?
-        for config in self.services.values():
-            service = self.session.rget(f'services/{service["id"]}')
-            config["team"] = service["teams"]
-
-
-# pd = PagerDuty("u+Y33RtpsQusiBajGnQg")
-# pd.get_team_members()
-# print("")
