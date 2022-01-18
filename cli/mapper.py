@@ -1,5 +1,5 @@
-from air import AIR
-from pagerduty import PagerDuty
+from .air import AIR
+from .pagerduty import PagerDuty
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
 import logging
@@ -21,6 +21,7 @@ class Mapper:
         self.rotation = {604800: "weekly", 86400: "daily"}
 
     def map_and_create_users(self):
+        """Create a user from PagerDuty in AIR, or a mock user if in noop mode."""
         for user in self.pd.users:
             pd_id = user.pop("id")
             if self.noop:
@@ -29,15 +30,16 @@ class Mapper:
                 code, json = self.air.create_user(user)
                 if "error" in json:
                     logger.error(
-                        f'Attempted to create user "{user["emailAddress"]}"; received response code {code} and error "{json["message"]}"'
+                        f'[USER] Attempted to create user "{user["emailAddress"]}"; received response code {code} and error "{json["message"]}"'
                     )
                     continue
                 logger.info(
-                    f'Created user for "{user["emailAddress"]}"; sysId "{json["sysId"]}"'
+                    f'[USER] Created user for "{user["emailAddress"]}"; sysId "{json["sysId"]}"'
                 )
                 self.users[pd_id] = json["sysId"]
 
     def map_team_members(self):
+        """Associate users with their teams."""
         for team in self.pd.teams:
             pd_id = team.get("id")
             self.team_members[pd_id] = {}
@@ -47,6 +49,7 @@ class Mapper:
                 self.team_members[pd_id]["members"].append(self.users.get(member))
 
     def map_teams(self):
+        """Create a team from PagerDuty in AIR, or a mock team if in noop mode."""
         for team in self.pd.teams:
             team_id = team.pop("id")
             team["members"] = self.team_members.get(team_id).get("members")
@@ -59,14 +62,31 @@ class Mapper:
                 code, json = self.air.create_team(team)
                 if "error" in json:
                     logger.error(
-                        f'Attempted to create team "{team["name"]}"; received response code {code} and error message "{json["message"]}"'
+                        f'[TEAM] Attempted to create team "{team["name"]}"; received response code {code} and error message "{json["message"]}"'
                     )
                     continue
                 team["sysId"] = json["sysId"]
-                logger.info(f'Created team "{team["name"]}" with sysId {json["sysId"]}')
+                logger.info(
+                    f'[TEAM] Created team "{team["name"]}" with sysId {json["sysId"]}'
+                )
             self.teams[team_id] = team
 
     def create_team_from_escal_policy(self, escal_id, name):
+        """Create a team in AIR that is inferred from an escalation policy in PagerDuty.
+
+        Notes:
+            A team must be associated with an escalation policy in AIR, but PagerDuty does
+            not require a team. This function will read the PD escalation policy and create a
+            team in AIR based on the members in the escalation policy in order to create
+            the policy in AIR with a team.
+
+        Args:
+            escal_id (str): PagerDuty ID for the escalation policy
+            name (str): Name of the PagerDuty escalation policy
+
+        Returns:
+            dict: JSON response from AIR after creating the team
+        """
         members = []
         escal = self.pd.get_details(f"escalation_policies/{escal_id}")
         for rule in escal["escalation_rules"]:
@@ -78,25 +98,30 @@ class Mapper:
             "members": members,
             "teamState": "complete",
             "name": team_name,
-            "description": f"Team inferred from escalation policy of service {name}",
+            "description": f"Team inferred from escalation policy of service '{name}'",
         }
-        code, json = self.air.create_team(payload)
-        if "error" in json:
-            logger.error(
-                f'Attempted to create team for service {name}; received response code {code} and error message "{json["message"]}"'
+        if self.noop:
+            payload["sysId"] = f"noop - {escal_id} {name}"
+            self.teams[f"{escal_id} {name}"] = payload
+        else:
+            code, json = self.air.create_team(payload)
+            if "error" in json:
+                logger.error(
+                    f'[TEAM] Attempted to create team for service "{name}"; received response code {code} and error message "{json["message"]}"'
+                )
+                return None
+            logger.info(
+                f'[TEAM] Created team "{team_name}" from escalation policy with sysId {json["sysId"]}'
             )
-            return None
-        logger.info(
-            f'Created team "{team_name}" from escalation policywith sysId {json["sysId"]}'
-        )
-        return json
+            return json
 
     def map_services(self):
+        """Create a service from PagerDuty in AIR, or a mock service if in noop mode."""
         for service in self.pd.services:
             service_teams = service.pop("teams")
             if not service_teams:
                 service_details = self.pd.get_details(f"services/{service['id']}")
-                if service_details.get("escalation_policy").get("id"):
+                if service_details.get("escalation_policy", {}).get("id"):
                     resp = self.create_team_from_escal_policy(
                         service_details["escalation_policy"]["id"], service["name"]
                     )
@@ -108,7 +133,7 @@ class Mapper:
                         }
                 else:
                     logger.info(
-                        f'There is no escalation policy associated with service "{service["name"]}" - cannot infer team members. Creating service without team.'
+                        f'[SERVICE] There is no escalation policy associated with service "{service["name"]}" - cannot infer team members. Creating service without team.'
                     )
                     self.services[service["id"]] = {
                         "name": f"{service['name']} (No Team Assigned)",
@@ -124,18 +149,19 @@ class Mapper:
                 code, json = self.air.create_service(self.services[service["id"]])
                 if "error" in json:
                     logger.error(
-                        f'Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
+                        f'[SERVICE] Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
                     )
                     continue
                 logger.info(
-                    f'Created service "{service["name"]}" with sysId {json["sysId"]}"'
+                    f'[SERVICE] Created service "{service["name"]}" with sysId {json["sysId"]}"'
                 )
 
     def map_schedules(self):
+        """Create a schedule from PagerDuty in AIR, or a mock schedule if in noop mode."""
         for sched in self.pd.schedules:
             if not sched["teams"]:
                 logger.warning(
-                    f'Schedule {sched["name"]} does not have an associated team and cannot be migrated.'
+                    f'[SHIFT] Schedule "{sched["name"]}" does not have an associated team and cannot be migrated.'
                 )
                 continue
             sched_index = 0
@@ -176,18 +202,19 @@ class Mapper:
                     code, json = self.air.create_shift(schedule)
                     if "error" in json:
                         logger.error(
-                            f'Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
+                            f'[SHIFT] Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
                         )
                         continue
                     logger.info(
-                        f'Created shift "{sched["name"]}" with sysId "{json["sysId"]}"'
+                        f'[SHIFT] Created shift "{sched["name"]}" with sysId "{json["sysId"]}"'
                     )
 
     def map_escalations(self):
+        """Create an escalation policy from PagerDuty in AIR, or a mock policy if in noop mode."""
         for escal in self.pd.escalations:
             if not escal["teams"]:
                 logger.warning(
-                    f'Escalation policy "{escal["name"]}" is not associated with a team and cannot be migrated'
+                    f'[ESCALATION] Escalation policy "{escal["name"]}" is not associated with a team and cannot be migrated'
                 )
                 continue
             for team in escal["teams"]:
@@ -203,25 +230,28 @@ class Mapper:
                             "escalation_delay_in_minutes"
                         ]
                     for target in rule["targets"]:
+                        members = []
                         if target["type"] == "user_reference":
-                            audience.append(
-                                {
-                                    "type": "users",
-                                    "users": [self.users.get(target["id"])],
-                                }
-                            )
+                            members.append(self.users.get(target["id"]))
+
+                        elif target["type"] == "schedule_reference":
+
+                            schedule = self.shifts.get(target["id"])
+                            for layer in schedule:
+                                members += layer["primaryMembers"]
                         else:
                             logger.warning(
-                                f'Cannot migrate target type {target["type"]} for step {rule_index} in escalation {escal["name"]}'
+                                f'[ESCALATION] Cannot migrate target type "{target["type"]}" for step {rule_index} in escalation "{escal["name"]}"'
                             )
                             continue
+                        audience.append({"type": "users", "users": members})
                     if audience:
                         step["audience"] = audience
                         steps.append(step)
                         escalation["steps"] = steps
                     else:
                         logger.warning(
-                            f'No audience for rule {rule_index} in escalation "{escal["name"]} - skipping layer."'
+                            f'[ESCALATION] No audience for rule {rule_index} in escalation "{escal["name"]}" - skipping layer.'
                         )
                     rule_index += 1
             if "steps" in escalation:
@@ -231,20 +261,22 @@ class Mapper:
                 self.escalations[escal["id"]] = escalation
             else:
                 logger.warning(
-                    f'No steps found or no audience found for escalation "{escal["name"]}" - cannot migrate.'
+                    f'[ESCALATION] No steps found or no audience found for escalation "{escal["name"]}" - cannot migrate.'
                 )
+                continue
             if not self.noop:
                 code, json = self.air.create_escalation(escalation)
                 if "error" in json:
                     logger.error(
-                        f'Attempted to create escalation "{escal["name"]}"; received response code {code} and error "{json["message"]}"'
+                        f'[ESCALATION] Attempted to create escalation "{escal["name"]}"; received response code {code} and error "{json["message"]}"'
                     )
                     continue
                 logger.info(
-                    f'Created escalation "{escal["name"]}" with sysId {json["sysId"]}'
+                    f'[ESCALATION] Created escalation "{escal["name"]}" with sysId {json["sysId"]}'
                 )
 
     def noop_output(self):
+        """Print a noop report to console."""
         print("\nWould create the following users:\n----------")
         for pd_user, air_user in self.users.items():
             print(f"PD User ID: {pd_user} AIR User: {air_user}")

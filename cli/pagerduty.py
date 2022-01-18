@@ -6,6 +6,11 @@ logger = logging.getLogger(__name__)
 
 class PagerDuty:
     def __init__(self, api_token):
+        """Class for interacting with PagerDuty.
+
+        Args:
+            api_token (str): PagerDuty API token
+        """
         self.session = APISession(api_token)
         self.users = self.get_all_users()
         self.teams = self.get_all_teams()
@@ -15,6 +20,14 @@ class PagerDuty:
         self.escalations = self.get_all_escalations()
 
     def get_data_for_category(self, category):
+        """Gather all data for resources of a particular type.
+
+        Args:
+            category (str): Category to retrieve data for.
+
+        Returns:
+            list: List of dict objects for the given category.
+        """
         logger.debug(f"Getting data for category {category}.")
         try:
             response = [data for data in self.session.iter_all(category)]
@@ -24,11 +37,10 @@ class PagerDuty:
         return response
 
     def get_all_users(self):
-        """Returns a dictionary of all users in the target PagerDuty account.
+        """Gather all users in the target PagerDuty account.
 
         Returns:
-            dict: The key is the email of the user, and the value are the values expected
-                  by AIR to be able to create a user.
+            list: A list containing dicts of user information
         """
         users = []
         for user in self.get_data_for_category("users"):
@@ -50,6 +62,11 @@ class PagerDuty:
         return users
 
     def get_all_teams(self):
+        """Gather all teams in a given PagerDuty account.
+
+        Returns:
+            list: List of dicts representing all teams
+        """
         teams = []
         for team in self.get_data_for_category("teams"):
             teams.append(
@@ -59,10 +76,15 @@ class PagerDuty:
                     "description": team["description"],
                 }
             )
-        logging.debug(f"Gathered the following teams: {teams}")
+        logger.debug(f"Gathered the following teams: {teams}")
         return teams
 
     def get_all_services(self):
+        """Gather all services in a given PagerDuty account.
+
+        Returns:
+            list: List of dicts representing all services
+        """
         services = []
         for service in self.get_data_for_category("services"):
             services.append(
@@ -73,18 +95,30 @@ class PagerDuty:
                     "name": service["name"],
                 }
             )
-        logging.debug(f"Gathered the following services: {services}")
+        logger.debug(f"Gathered the following services: {services}")
         return services
 
     def get_details(self, endpoint):
+        """Retrieve details about a specific PagerDuty resource
+
+        Args:
+            endpoint (str): PagerDuty API endpoint specifc resource
+
+        Returns:
+            dict: resource response from PagerDuty API endpoint
+        """
         try:
-            response = self.session.rget(endpoint)
-            return response
+            return self.session.rget(endpoint)
         except PDClientError as e:
             logger.error(f"Request to endpont {endpoint} failed: {e}")
             return {}
 
     def get_all_schedules(self):
+        """Gather all schedules for a given PagerDuty account
+
+        Returns:
+            list: List of dicts representing all schedules
+        """
         schedules = []
         for schedule in self.get_data_for_category("schedules"):
             details = self.session.rget(f"schedules/{schedule['id']}")
@@ -101,6 +135,11 @@ class PagerDuty:
         return schedules
 
     def get_all_escalations(self):
+        """Gather all escalation policies from a given PagerDuty account.
+
+        Returns:
+            list: List of dicts representing all escalation policies
+        """
         escalations = []
         for escalation in self.get_data_for_category("escalation_policies"):
             escalations.append(
@@ -114,6 +153,12 @@ class PagerDuty:
         return escalations
 
     def get_team_members(self):
+        """Associate members with their assigned teams.
+
+        AIR teams can only have one manager. If multiple managers are found
+        for a PagerDuty team, the first "manager" user will be chosen as the
+        AIR team manager.
+        """
         for config in self.teams:
             config["members"] = []
             config["manager"] = ""
@@ -132,7 +177,7 @@ class PagerDuty:
                         }
                     )
             if len(managers) > 1:
-                logger.info(
-                    f"Multiple managers found for team '{config['name']}', selecting {managers[0]['user']} as manager"
+                logger.warning(
+                    f"[TEAM] Multiple managers found for team '{config['name']}', selecting {managers[0]['user']} as manager"
                 )
-                config["manager"] = managers[0]["id"]
+            config["manager"] = managers[0]["id"]

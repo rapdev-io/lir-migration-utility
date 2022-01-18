@@ -1,0 +1,31 @@
+version: "3.9"
+services:
+
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["pytest", "--cov", "cli", "--cov-report", "term-missing", "-v"]
+    volumes:
+      - ./cli:/app/cli
+      - ./tests:/app/tests
+
+  noop:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--irtoken", "$IRTOKEN", "--apiurl", "$AIRURL", "--noop"]
+    volumes:
+      - ./cli:/app/cli
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--irtoken", "$IRTOKEN", "--apiurl", "$AIRURL"]
+    volumes:
+      - ./cli:/app/cli

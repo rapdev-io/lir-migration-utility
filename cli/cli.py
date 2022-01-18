@@ -1,9 +1,15 @@
 from argparse import ArgumentParser
-from mapper import Mapper
+from .mapper import Mapper
 import logging
+import sys
 
 
-def parse_args():
+def parse_args(args):
+    """Parse command line arguments
+
+    Returns:
+        argparse.Namespace: Parsed command line arguments
+    """
     parser = ArgumentParser()
     parser.add_argument(
         "--pd", action="store", required=True, help="PagerDuty API token"
@@ -24,17 +30,25 @@ def parse_args():
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 def setup_logger(args):
+    """Setup logger format and level based on command line args.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments
+    """
     logger = logging.getLogger()
     logger.setLevel(level=args.level)
     handler = logging.StreamHandler()
     handler.setLevel(args.level)
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d: %(message)s"
-    )
+    if args.level == "DEBUG":
+        formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(filename)s:%(lineno)d: %(message)s"
+        )
+    else:
+        formatter = logging.Formatter("[%(levelname)s] %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
@@ -52,6 +66,6 @@ def main(args):
         mapper.noop_output()
 
 
-if __name__ == "__main__":
-    args = parse_args()
+if __name__ == "__main__":  # pragma: no cover
+    args = parse_args(sys.argv[1:])
     main(args)
