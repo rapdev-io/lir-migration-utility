@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    command: ["pytest", "--cov", "cli", "--cov-report", "term-missing", "-v"]
+    command: ["pytest", "--cov", "cli", "--cov-report", "term-missing", "-v", "--pdb"]
     volumes:
       - ./cli:/app/cli
       - ./tests:/app/tests
@@ -16,7 +16,7 @@ services:
       dockerfile: docker/Dockerfile
     env_file:
       - .env
-    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--irtoken", "$IRTOKEN", "--apiurl", "$AIRURL", "--noop"]
+    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--lirtoken", "$LIR_TOKEN", "--apiurl", "$LIR_URL", "--noop"]
     volumes:
       - ./cli:/app/cli
 
@@ -26,6 +26,6 @@ services:
       dockerfile: docker/Dockerfile
     env_file:
       - .env
-    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--irtoken", "$IRTOKEN", "--apiurl", "$AIRURL"]
+    command: ["python", "-m", "cli.cli", "--pd", "$PAGERDUTY", "--lirtoken", "$LIR_TOKEN", "--apiurl", "$LIR_URL"]
     volumes:
       - ./cli:/app/cli

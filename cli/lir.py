@@ -5,26 +5,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class AIR:
-    def __init__(self, irtoken, url):
-        """Class for creating resources in AIR.
+class LIR:
+    def __init__(self, lirtoken, url):
+        """Class for creating resources in LIR.
 
         Args:
-            irtoken (str): AIR authentication token
-            url (str): Base URL of AIR instance
+            lirtoken (str): LIR authentication token
+            url (str): Base URL of LIR instance
         """
 
         self.url = url
-        self.irtoken = irtoken
+        self.lirtoken = lirtoken
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"IRToken {self.irtoken}",
+            "Authorization": f"IRToken {self.lirtoken}",
         }
         self.session = requests.Session()
         self.session.headers.update(self.headers)
 
     def post_request(self, url, payload):
-        """Invokes a post request to AIR.
+        """Invokes a post request to LIR.
 
         Notes:
             When any kind of exception is returned, we log the error

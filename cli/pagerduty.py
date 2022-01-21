@@ -155,9 +155,9 @@ class PagerDuty:
     def get_team_members(self):
         """Associate members with their assigned teams.
 
-        AIR teams can only have one manager. If multiple managers are found
+        LIR teams can only have one manager. If multiple managers are found
         for a PagerDuty team, the first "manager" user will be chosen as the
-        AIR team manager.
+        LIR team manager.
         """
         for config in self.teams:
             config["members"] = []

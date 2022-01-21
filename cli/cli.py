@@ -15,9 +15,9 @@ def parse_args(args):
         "--pd", action="store", required=True, help="PagerDuty API token"
     )
     parser.add_argument(
-        "--irtoken", action="store", required=True, help="AIR API token"
+        "--lirtoken", action="store", required=True, help="LIR API token"
     )
-    parser.add_argument("--apiurl", action="store", required=True, help="AIR API URL")
+    parser.add_argument("--apiurl", action="store", required=True, help="LIR API URL")
     parser.add_argument(
         "--noop",
         action="store_true",
@@ -55,7 +55,7 @@ def setup_logger(args):
 
 def main(args):
     setup_logger(args)
-    mapper = Mapper(args.irtoken, args.apiurl, args.pd, noop=args.noop)
+    mapper = Mapper(args.lirtoken, args.apiurl, args.pd, noop=args.noop)
     mapper.map_and_create_users()
     mapper.map_team_members()
     mapper.map_teams()

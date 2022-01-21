@@ -1,4 +1,4 @@
-from .air import AIR
+from .lir import LIR
 from .pagerduty import PagerDuty
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class Mapper:
-    def __init__(self, irtoken, url, api_token, noop=False):
+    def __init__(self, lirtoken, url, api_token, noop=False):
         self.users = {}
         self.team_members = {}
         self.teams = {}
@@ -16,18 +16,18 @@ class Mapper:
         self.shifts = {}
         self.escalations = {}
         self.noop = noop
-        self.air = AIR(irtoken, url)
+        self.lir = LIR(lirtoken, url)
         self.pd = PagerDuty(api_token)
         self.rotation = {604800: "weekly", 86400: "daily"}
 
     def map_and_create_users(self):
-        """Create a user from PagerDuty in AIR, or a mock user if in noop mode."""
+        """Create a user from PagerDuty in LIR, or a mock user if in noop mode."""
         for user in self.pd.users:
             pd_id = user.pop("id")
             if self.noop:
                 self.users[pd_id] = f"noop - pd user {user['emailAddress']}"
             else:
-                code, json = self.air.create_user(user)
+                code, json = self.lir.create_user(user)
                 if "error" in json:
                     logger.error(
                         f'[USER] Attempted to create user "{user["emailAddress"]}"; received response code {code} and error "{json["message"]}"'
@@ -49,7 +49,7 @@ class Mapper:
                 self.team_members[pd_id]["members"].append(self.users.get(member))
 
     def map_teams(self):
-        """Create a team from PagerDuty in AIR, or a mock team if in noop mode."""
+        """Create a team from PagerDuty in LIR, or a mock team if in noop mode."""
         for team in self.pd.teams:
             team_id = team.pop("id")
             team["members"] = self.team_members.get(team_id).get("members")
@@ -59,7 +59,7 @@ class Mapper:
                 team["name"] = f"noop - {team['name']}"
                 team["sysId"] = f"noop - pd team {team_id}"
             else:
-                code, json = self.air.create_team(team)
+                code, json = self.lir.create_team(team)
                 if "error" in json:
                     logger.error(
                         f'[TEAM] Attempted to create team "{team["name"]}"; received response code {code} and error message "{json["message"]}"'
@@ -72,20 +72,20 @@ class Mapper:
             self.teams[team_id] = team
 
     def create_team_from_escal_policy(self, escal_id, name):
-        """Create a team in AIR that is inferred from an escalation policy in PagerDuty.
+        """Create a team in LIR that is inferred from an escalation policy in PagerDuty.
 
         Notes:
-            A team must be associated with an escalation policy in AIR, but PagerDuty does
+            A team must be associated with an escalation policy in LIR, but PagerDuty does
             not require a team. This function will read the PD escalation policy and create a
-            team in AIR based on the members in the escalation policy in order to create
-            the policy in AIR with a team.
+            team in LIR based on the members in the escalation policy in order to create
+            the policy in LIR with a team.
 
         Args:
             escal_id (str): PagerDuty ID for the escalation policy
             name (str): Name of the PagerDuty escalation policy
 
         Returns:
-            dict: JSON response from AIR after creating the team
+            dict: JSON response from LIR after creating the team
         """
         members = []
         escal = self.pd.get_details(f"escalation_policies/{escal_id}")
@@ -104,7 +104,7 @@ class Mapper:
             payload["sysId"] = f"noop - {escal_id} {name}"
             self.teams[f"{escal_id} {name}"] = payload
         else:
-            code, json = self.air.create_team(payload)
+            code, json = self.lir.create_team(payload)
             if "error" in json:
                 logger.error(
                     f'[TEAM] Attempted to create team for service "{name}"; received response code {code} and error message "{json["message"]}"'
@@ -116,7 +116,7 @@ class Mapper:
             return json
 
     def map_services(self):
-        """Create a service from PagerDuty in AIR, or a mock service if in noop mode."""
+        """Create a service from PagerDuty in LIR, or a mock service if in noop mode."""
         for service in self.pd.services:
             service_teams = service.pop("teams")
             if not service_teams:
@@ -146,7 +146,7 @@ class Mapper:
                     "description": service["description"],
                 }
             if not self.noop:
-                code, json = self.air.create_service(self.services[service["id"]])
+                code, json = self.lir.create_service(self.services[service["id"]])
                 if "error" in json:
                     logger.error(
                         f'[SERVICE] Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
@@ -156,21 +156,51 @@ class Mapper:
                     f'[SERVICE] Created service "{service["name"]}" with sysId {json["sysId"]}"'
                 )
 
+    def create_team_from_schedule(self, schedule):
+        if "primaryMembers" in schedule and schedule["primaryMembers"]:
+            team_name = f"{schedule['name']} (schedule based team)"
+            payload = {
+                "members": schedule["primaryMembers"],
+                "teamState": "complete",
+                "name": team_name,
+                "description": f"Team inferred from members of schedule {schedule['name']}",
+            }
+            if self.noop:
+                payload["sysId"] = f"noop - {schedule['id']} {schedule['name']}"
+                self.teams[f"noop - {schedule['id']} {schedule['name']}"] = payload
+                return payload["sysId"]
+            else:
+                code, json = self.lir.create_team(payload)
+                if "error" in json:
+                    logger.error(
+                        f'[TEAM] Attempted to create team from schedule {schedule["name"]}; received response code {code} and error message "{json["message"]}"'
+                    )
+                    return None
+                self.teams[json["sysId"]] = payload
+                logger.info(
+                    f'[TEAM] Created team "{team_name}" from schedule with sysId {json["sysId"]}'
+                )
+                return json["sysId"]
+
     def map_schedules(self):
-        """Create a schedule from PagerDuty in AIR, or a mock schedule if in noop mode."""
+        """Create a schedule from PagerDuty in LIR, or a mock schedule if in noop mode."""
         for sched in self.pd.schedules:
             if not sched["teams"]:
-                logger.warning(
-                    f'[SHIFT] Schedule "{sched["name"]}" does not have an associated team and cannot be migrated.'
-                )
-                continue
+                team = self.create_team_from_schedule(sched)
+                if team:
+                    sched["teams"].append({"id": team})
+                else:
+                    logger.warning(
+                        f'[TEAM] Could not infer team from users in schedule, will not create schedule "{sched["name"]}"'
+                    )
+                    continue
             sched_index = 0
             self.shifts[sched["id"]] = []
             for team in sched["teams"]:
                 for layer in sched["schedule_layers"]:
                     schedule = {
                         "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
-                        "team": self.teams.get(team["id"])["sysId"],
+                        "team": self.teams.get(team["id"], {}).get("sysId", team),
                         "startTime": parse(layer["start"]).strftime("%H:%M"),
                         "startDate": parse(layer["start"]).strftime("%Y-%m-%d"),
                         "endTime": parse(layer["start"]).strftime("%H:%M")
@@ -199,7 +229,7 @@ class Mapper:
                     sched_index += 1
                     self.shifts[sched["id"]].append(schedule)
                 if not self.noop:
-                    code, json = self.air.create_shift(schedule)
+                    code, json = self.lir.create_shift(schedule)
                     if "error" in json:
                         logger.error(
                             f'[SHIFT] Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
@@ -210,7 +240,7 @@ class Mapper:
                     )
 
     def map_escalations(self):
-        """Create an escalation policy from PagerDuty in AIR, or a mock policy if in noop mode."""
+        """Create an escalation policy from PagerDuty in LIR, or a mock policy if in noop mode."""
         for escal in self.pd.escalations:
             if not escal["teams"]:
                 logger.warning(
@@ -265,7 +295,7 @@ class Mapper:
                 )
                 continue
             if not self.noop:
-                code, json = self.air.create_escalation(escalation)
+                code, json = self.lir.create_escalation(escalation)
                 if "error" in json:
                     logger.error(
                         f'[ESCALATION] Attempted to create escalation "{escal["name"]}"; received response code {code} and error "{json["message"]}"'
@@ -279,7 +309,7 @@ class Mapper:
         """Print a noop report to console."""
         print("\nWould create the following users:\n----------")
         for pd_user, air_user in self.users.items():
-            print(f"PD User ID: {pd_user} AIR User: {air_user}")
+            print(f"PD User ID: {pd_user} LIR User: {air_user}")
         print("\nWould create the following teams:\n----------")
         for pd_id, data in self.teams.items():
             data.pop("sysId")

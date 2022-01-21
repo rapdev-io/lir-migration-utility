@@ -32,14 +32,14 @@ user_jane = {
     "bio": "",
 }
 
-air_user_john = {
+lir_user_john = {
     "firstName": "john",
     "lastName": "doe",
     "emailAddress": "john@example.com",
     "role": "manager",
     "bio": "who am i",
 }
-air_user_jane = {
+lir_user_jane = {
     "firstName": "jane",
     "lastName": "jane",
     "emailAddress": "jane@example.com",
@@ -140,12 +140,24 @@ schedule_details = {
 
 schedules = [
     {
+        "name": "test schedule 0",
+        "id": "abc123",
+        "timeZone": "America/New_York",
+        "time_zone": "America/New_York",
+        "users": users,
+        "teams": [],
+        "schedule_layers": schedule_details["schedule_layers"],
+        "primaryMembers": ["abc123", "xyz789"],
+    },
+    {
         "name": "test schedule 1",
         "id": "abc123",
         "timeZone": "America/New_York",
         "time_zone": "America/New_York",
         "users": users,
         "teams": [],
+        "schedule_layers": schedule_details["schedule_layers"],
+        "primaryMembers": ["abc123", "xyz789"],
     },
     {
         "name": "test schedule 2",
@@ -161,8 +173,8 @@ schedules = [
         "id": "qwe456",
         "timeZone": "America/New_York",
         "time_zone": "America/New_York",
-        "users": users,
-        "teams": [{"id": "txyz789"}],
+        "users": [],
+        "teams": [],
         "schedule_layers": schedule_details["schedule_layers"],
     },
 ]
@@ -177,10 +189,10 @@ rendered_schedule = {
 }
 
 rendered_shifts = {
-    "xyz789": [
+    "abc123": [
         {
-            "name": "test schedule 2 (test team 2) - layer 0",
-            "team": "sysIdtxyz789",
+            "name": "test schedule 1 (test schedule 1 (schedule based team)) - layer 0",
+            "team": {"id": "sysIdabc123"},
             "startTime": "21:00",
             "startDate": "2015-11-06",
             "endTime": "09:00",
@@ -191,9 +203,9 @@ rendered_shifts = {
             "backupMembers": [],
         }
     ],
-    "qwe456": [
+    "xyz789": [
         {
-            "name": "test schedule 3 (test team 2) - layer 0",
+            "name": "test schedule 2 (test team 2) - layer 0",
             "team": "sysIdtxyz789",
             "startTime": "21:00",
             "startDate": "2015-11-06",

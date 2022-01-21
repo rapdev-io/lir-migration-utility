@@ -5,10 +5,10 @@ from unittest.mock import patch
 
 def test_parse_args():
     parsed_args = parse_args(
-        ["--pd", "abc123", "--irtoken", "xyz987", "--apiurl", "http://example.com"]
+        ["--pd", "abc123", "--lirtoken", "xyz987", "--apiurl", "http://example.com"]
     )
     assert parsed_args.pd == "abc123"
-    assert parsed_args.irtoken == "xyz987"
+    assert parsed_args.lirtoken == "xyz987"
     assert parsed_args.apiurl == "http://example.com"
     assert parsed_args.noop == False
     assert parsed_args.level == "INFO"
@@ -16,7 +16,7 @@ def test_parse_args():
 
 def test_setup_logger():
     parsed_args = parse_args(
-        ["--pd", "abc123", "--irtoken", "xyz987", "--apiurl", "http://example.com"]
+        ["--pd", "abc123", "--lirtoken", "xyz987", "--apiurl", "http://example.com"]
     )
     setup_logger(parsed_args)
     logger = logging.getLogger()
@@ -28,7 +28,7 @@ def test_setup_logger_debug():
         [
             "--pd",
             "abc123",
-            "--irtoken",
+            "--lirtoken",
             "xyz987",
             "--apiurl",
             "http://example.com",
@@ -51,7 +51,7 @@ def test_main(mapper):
         [
             "--pd",
             "abc123",
-            "--irtoken",
+            "--lirtoken",
             "xyz987",
             "--apiurl",
             "http://example.com",
