@@ -2,13 +2,14 @@ from .lir import LIR
 from .pagerduty import PagerDuty
 from dateutil.parser import parse
 from dateutil.relativedelta import relativedelta
+import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class Mapper:
-    def __init__(self, lirtoken, url, api_token, noop=False):
+    def __init__(self, lirtoken, url, api_token, noop=False, pretty=False):
         self.users = {}
         self.team_members = {}
         self.teams = {}
@@ -16,6 +17,7 @@ class Mapper:
         self.shifts = {}
         self.escalations = {}
         self.noop = noop
+        self.pretty = pretty
         self.lir = LIR(lirtoken, url)
         self.pd = PagerDuty(api_token)
         self.rotation = {604800: "weekly", 86400: "daily"}
@@ -34,7 +36,7 @@ class Mapper:
                     )
                     continue
                 logger.info(
-                    f'[USER] Created user for "{user["emailAddress"]}"; sysId "{json["sysId"]}"'
+                    f'[USER] Created user for "{user["firstName"]} {user["lastName"]} ({user["emailAddress"]})"; sysId "{json["sysId"]}"'
                 )
                 self.users[pd_id] = json["sysId"]
 
@@ -98,21 +100,24 @@ class Mapper:
             "members": members,
             "teamState": "complete",
             "name": team_name,
-            "description": f"Team inferred from escalation policy of service '{name}'",
+            "description": f'Team inferred from escalation policy "{escal["name"]}" of service "{name}"',
         }
         if self.noop:
             payload["sysId"] = f"noop - {escal_id} {name}"
             self.teams[f"{escal_id} {name}"] = payload
         else:
             code, json = self.lir.create_team(payload)
+            payload["sysId"] = json["sysId"]
+            self.teams[json["sysId"]] = payload
             if "error" in json:
                 logger.error(
                     f'[TEAM] Attempted to create team for service "{name}"; received response code {code} and error message "{json["message"]}"'
                 )
                 return None
             logger.info(
-                f'[TEAM] Created team "{team_name}" from escalation policy with sysId {json["sysId"]}'
+                f'[TEAM] Created team "{team_name}" from escalation policy "{escal["name"]}" with sysId {json["sysId"]}'
             )
+            json["name"] = team_name
             return json
 
     def map_services(self):
@@ -126,6 +131,17 @@ class Mapper:
                         service_details["escalation_policy"]["id"], service["name"]
                     )
                     if resp:
+                        for escal in self.pd.escalations:
+                            if (
+                                escal["id"]
+                                == service_details["escalation_policy"]["id"]
+                            ):
+                                escal["teams"].append(
+                                    {"id": resp["sysId"], "name": resp["name"]}
+                                )
+                        self.escalations[
+                            service_details["escalation_policy"]["id"]
+                        ] = resp["sysId"]
                         self.services[service["id"]] = {
                             "name": f"{service['name']}",
                             "description": service["description"],
@@ -163,7 +179,7 @@ class Mapper:
                 "members": schedule["primaryMembers"],
                 "teamState": "complete",
                 "name": team_name,
-                "description": f"Team inferred from members of schedule {schedule['name']}",
+                "description": f'Team inferred from members of schedule "{schedule["name"]}"',
             }
             if self.noop:
                 payload["sysId"] = f"noop - {schedule['id']} {schedule['name']}"
@@ -173,17 +189,19 @@ class Mapper:
                 code, json = self.lir.create_team(payload)
                 if "error" in json:
                     logger.error(
-                        f'[TEAM] Attempted to create team from schedule {schedule["name"]}; received response code {code} and error message "{json["message"]}"'
+                        f'[TEAM] Attempted to create team from schedule "{schedule["name"]}"; received response code {code} and error message "{json["message"]}"'
                     )
                     return None
+                payload["sysId"] = json["sysId"]
                 self.teams[json["sysId"]] = payload
                 logger.info(
-                    f'[TEAM] Created team "{team_name}" from schedule with sysId {json["sysId"]}'
+                    f'[TEAM] Created team "{team_name}" from schedule "{schedule["name"]}" with sysId {json["sysId"]}'
                 )
                 return json["sysId"]
 
     def map_schedules(self):
         """Create a schedule from PagerDuty in LIR, or a mock schedule if in noop mode."""
+        schedules = []
         for sched in self.pd.schedules:
             if not sched["teams"]:
                 team = self.create_team_from_schedule(sched)
@@ -194,50 +212,159 @@ class Mapper:
                         f'[TEAM] Could not infer team from users in schedule, will not create schedule "{sched["name"]}"'
                     )
                     continue
-            sched_index = 0
+
             self.shifts[sched["id"]] = []
+            has_restrictions = False
             for team in sched["teams"]:
                 for layer in sched["schedule_layers"]:
-                    schedule = {
-                        "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
-                        "team": self.teams.get(team["id"], {}).get("sysId", team),
-                        "startTime": parse(layer["start"]).strftime("%H:%M"),
-                        "startDate": parse(layer["start"]).strftime("%Y-%m-%d"),
-                        "endTime": parse(layer["start"]).strftime("%H:%M")
-                        if layer["end"]
-                        else (parse(layer["start"]) + relativedelta(hours=12)).strftime(
-                            "%H:%M"
-                        ),
-                        "repeatUntil": parse(layer["start"]).strftime("%Y-%m-%d")
-                        if layer["end"]
-                        else (parse(layer["start"]) + relativedelta(years=5)).strftime(
-                            "%Y-%m-%d"
-                        ),
-                        "rotationType": self.rotation.get(
-                            layer["rotation_turn_length_seconds"], "weekly"
-                        ),
-                        "timeZone": sched["timeZone"],
-                        "primaryMembers": [
-                            self.users.get(user["user"]["id"])
-                            for user in layer["users"]
-                            if self.users.get(user["user"]["id"])
-                            in self.teams.get(team["id"])["members"]
-                        ],
-                        # We can't fill this in, but the API requires it
-                        "backupMembers": [],
-                    }
-                    sched_index += 1
-                    self.shifts[sched["id"]].append(schedule)
-                if not self.noop:
-                    code, json = self.lir.create_shift(schedule)
-                    if "error" in json:
-                        logger.error(
-                            f'[SHIFT] Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
-                        )
-                        continue
-                    logger.info(
-                        f'[SHIFT] Created shift "{sched["name"]}" with sysId "{json["sysId"]}"'
+                    sched_index = 0
+                    if layer["restrictions"]:
+                        has_restrictions = True
+                        restrictions = []
+                        for restr in layer["restrictions"]:
+                            if restr["type"] == "weekly_restriction":
+                                restrictions.append(
+                                    {
+                                        "days": "".join(
+                                            [
+                                                str(i)
+                                                for i in range(
+                                                    restr["start_day_of_week"] + 1,
+                                                    restr["start_day_of_week"]
+                                                    + 1
+                                                    + round(
+                                                        (
+                                                            restr["duration_seconds"]
+                                                            / 86400
+                                                        )
+                                                    )
+                                                    + 1,
+                                                )
+                                            ]
+                                        ),
+                                        "start_times": {
+                                            "startTime": ":".join(
+                                                restr["start_time_of_day"].split(":")[
+                                                    0:2
+                                                ]
+                                            ),
+                                            "endTime": (
+                                                parse(restr["start_time_of_day"])
+                                                + relativedelta(
+                                                    seconds=restr["duration_seconds"]
+                                                )
+                                            ).strftime("%H:%M"),
+                                        },
+                                    }
+                                )
+
+                            elif restr["type"] == "daily_restriction":
+                                restrictions.append(
+                                    {
+                                        "days": "1234567",
+                                        "start_times": {
+                                            "startTime": ":".join(
+                                                restr["start_time_of_day"].split(":")[
+                                                    0:2
+                                                ]
+                                            ),
+                                            "endTime": (
+                                                parse(restr["start_time_of_day"])
+                                                + relativedelta(
+                                                    seconds=(
+                                                        restr["duration_seconds"] - 60
+                                                        if restr["duration_seconds"]
+                                                        == 86400
+                                                        else restr["duration_seconds"]
+                                                    )
+                                                )
+                                            ).strftime("%H:%M"),
+                                        },
+                                    }
+                                )
+                        for restr in restrictions:
+                            schedule = {
+                                "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
+                                "team": self.teams.get(team["id"], {}).get(
+                                    "sysId", team
+                                ),
+                                "startTime": restr["start_times"]["startTime"],
+                                "startDate": parse(
+                                    layer["rotation_virtual_start"]
+                                ).strftime("%Y-%m-%d"),
+                                "endTime": restr["start_times"]["endTime"],
+                                "repeatUntil": parse(
+                                    layer["rotation_virtual_start"]
+                                ).strftime("%Y-%m-%d")
+                                if layer["end"]
+                                else (
+                                    parse(layer["rotation_virtual_start"])
+                                    + relativedelta(years=5)
+                                ).strftime("%Y-%m-%d"),
+                                "rotationType": self.rotation.get(
+                                    layer["rotation_turn_length_seconds"], "weekly"
+                                ),
+                                "days": restr["days"],
+                                "timeZone": sched["timeZone"],
+                                "primaryMembers": [
+                                    self.users.get(user["user"]["id"])
+                                    for user in layer["users"]
+                                    if self.users.get(user["user"]["id"])
+                                    in self.teams.get(team["id"])["members"]
+                                ],
+                                # We can't fill this in, but the API requires it
+                                "backupMembers": [],
+                            }
+                            sched_index += 1
+                            self.shifts[sched["id"]].append(schedule)
+                            schedules.append(schedule)
+                    else:
+                        schedule = {
+                            "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
+                            "team": self.teams.get(team["id"], {}).get("sysId", team),
+                            "startTime": parse(layer["start"]).strftime("%H:%M"),
+                            "startDate": parse(layer["start"]).strftime("%Y-%m-%d"),
+                            "endTime": parse(layer["start"]).strftime("%H:%M")
+                            if layer["end"]
+                            else (
+                                parse(layer["start"]) + relativedelta(hours=12)
+                            ).strftime("%H:%M"),
+                            "repeatUntil": parse(layer["start"]).strftime("%Y-%m-%d")
+                            if layer["end"]
+                            else (
+                                parse(layer["start"]) + relativedelta(years=5)
+                            ).strftime("%Y-%m-%d"),
+                            "rotationType": self.rotation.get(
+                                layer["rotation_turn_length_seconds"], "weekly"
+                            ),
+                            "timeZone": sched["timeZone"],
+                            "primaryMembers": [
+                                self.users.get(user["user"]["id"])
+                                for user in layer["users"]
+                                if self.users.get(user["user"]["id"])
+                                in self.teams.get(team["id"])["members"]
+                            ],
+                            # We can't fill this in, but the API requires it
+                            "backupMembers": [],
+                        }
+                        sched_index += 1
+                        self.shifts[sched["id"]].append(schedule)
+                        schedules.append(schedule)
+            if has_restrictions:
+                logger.warning(
+                    f'[SHIFT] Shift "{sched["name"]}" has restrictions; please evaluate the schedule for accuracy, manual reconciliation may be required.'
+                )
+        if not self.noop:
+            for sched in schedules:
+                code, json = self.lir.create_shift(sched)
+                if "error" in json:
+                    logger.error(
+                        f'[SHIFT] Attempted to create shift "{sched["name"]}"; received response code {code} and error "{json["message"]}"'
                     )
+                    continue
+                logger.info(
+                    f'[SHIFT] Created shift "{sched["name"]}" with sysId "{json["sysId"]}"'
+                )
 
     def map_escalations(self):
         """Create an escalation policy from PagerDuty in LIR, or a mock policy if in noop mode."""
@@ -247,6 +374,7 @@ class Mapper:
                     f'[ESCALATION] Escalation policy "{escal["name"]}" is not associated with a team and cannot be migrated'
                 )
                 continue
+            # TODO: Send escalation name in the payload
             for team in escal["teams"]:
                 escalation = {}
                 steps = []
@@ -274,7 +402,7 @@ class Mapper:
                                 f'[ESCALATION] Cannot migrate target type "{target["type"]}" for step {rule_index} in escalation "{escal["name"]}"'
                             )
                             continue
-                        audience.append({"type": "users", "users": members})
+                        audience.append({"type": "users", "users": list(set(members))})
                     if audience:
                         step["audience"] = audience
                         steps.append(step)
@@ -308,22 +436,37 @@ class Mapper:
     def noop_output(self):
         """Print a noop report to console."""
         print("\nWould create the following users:\n----------")
-        for pd_user, air_user in self.users.items():
-            print(f"PD User ID: {pd_user} LIR User: {air_user}")
+        for pd_user in self.pd.users:
+            if self.pretty:
+                print(json.dumps(pd_user, indent=4))
+            else:
+                print(pd_user)
         print("\nWould create the following teams:\n----------")
         for pd_id, data in self.teams.items():
             data.pop("sysId")
             print(f"From PD Team {pd_id}:")
-            print(data)
+            if self.pretty:
+                print(json.dumps(data, indent=4))
+            else:
+                print(data)
         print("\nWould create the following services:\n----------")
         for pd_id, service in self.services.items():
             print(f"From PD Service {pd_id}:")
-            print(service)
+            if self.pretty:
+                print(json.dumps(service, indent=4))
+            else:
+                print(service)
         print("\nWould create the following shifts:\n----------")
         for pd_id, shift in self.shifts.items():
             print(f"From PD Schedule {pd_id}:")
-            print(shift)
+            if self.pretty:
+                print(json.dumps(shift, indent=4))
+            else:
+                print(shift)
         print("\nWould create the following escalations:\n----------")
         for pd_id, escal in self.escalations.items():
             print(f"From PD Escalation policy {pd_id}:")
-            print(escal)
+            if self.pretty:
+                print(json.dumps(escal, indent=4))
+            else:
+                print(escal)

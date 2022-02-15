@@ -27,6 +27,7 @@ This code was tested on the following versions of software:
 1. Python 3.9.9 (package versions outlined in requirements.txt)
 2. PagerDuty API V2
 3. Lightstep Incident Response January 18 2022 Release
+4. Docker Desktop 4.1
 
 ### Setup
 In the root of this repository, there is a file called `.env.example`. Rename this file
@@ -92,6 +93,8 @@ in this code that may be unexpected and should be noted.
   based off of the users on the schedule.
 - For a PagerDuty schedule, if there is no end date, the end date in LIR will be set
   for 5 years in the future.
+- For a PagerDuty schedule, if there are daily or weekly restrictions placed, please ensure that 
+  the schedule in LIR is accurate. Restricted schedules may require manual reconciliation.
 - Users in a PagerDuty schedule will only be added to an LIR schedule if they are part
   of the team associated with the schedule.
 - If no users for a PagerDuty escalation can be extracted from the team or schedule, it

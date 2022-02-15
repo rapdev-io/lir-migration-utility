@@ -122,6 +122,7 @@ class PagerDuty:
         schedules = []
         for schedule in self.get_data_for_category("schedules"):
             details = self.session.rget(f"schedules/{schedule['id']}")
+
             schedules.append(
                 {
                     "name": schedule["name"],

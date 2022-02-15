@@ -25,6 +25,12 @@ def parse_args(args):
         help="Output actions without making them",
     )
     parser.add_argument(
+        "--pretty",
+        action="store_true",
+        default=False,
+        help="Output noop with pretty print json",
+    )
+    parser.add_argument(
         "--level",
         action="store",
         default="INFO",
@@ -55,7 +61,9 @@ def setup_logger(args):
 
 def main(args):
     setup_logger(args)
-    mapper = Mapper(args.lirtoken, args.apiurl, args.pd, noop=args.noop)
+    mapper = Mapper(
+        args.lirtoken, args.apiurl, args.pd, noop=args.noop, pretty=args.pretty
+    )
     mapper.map_and_create_users()
     mapper.map_team_members()
     mapper.map_teams()
