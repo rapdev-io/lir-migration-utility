@@ -2,7 +2,13 @@ from pdpyras import APISession, PDClientError
 import logging
 
 logger = logging.getLogger(__name__)
+lfh = logging.FileHandler("{0}.log".format(__name__))
+logger.addHandler(lfh)
 
+def get_lir_role(pd_role):
+    if pd_role == 'admin':
+        return 'admin'
+    return 'responder'
 
 class PagerDuty:
     def __init__(self, api_token):
@@ -13,8 +19,7 @@ class PagerDuty:
         """
         self.session = APISession(api_token)
         self.users = self.get_all_users()
-        self.teams = self.get_all_teams()
-        self.get_team_members()
+        self.teams = self.get_team_members(self.get_all_teams())
         self.services = self.get_all_services()
         self.schedules = self.get_all_schedules()
         self.escalations = self.get_all_escalations()
@@ -153,14 +158,15 @@ class PagerDuty:
             )
         return escalations
 
-    def get_team_members(self):
+    def get_team_members(self, teams):
         """Associate members with their assigned teams.
 
         LIR teams can only have one manager. If multiple managers are found
         for a PagerDuty team, the first "manager" user will be chosen as the
         LIR team manager.
         """
-        for config in self.teams:
+        teams_config = []
+        for config in teams:
             config["members"] = []
             config["manager"] = ""
             # There may be multiple managers
@@ -177,8 +183,21 @@ class PagerDuty:
                             "id": member["user"]["id"],
                         }
                     )
-            if len(managers) > 1:
+            if len(members) == 0:
                 logger.warning(
-                    f"[TEAM] Multiple managers found for team '{config['name']}', selecting {managers[0]['user']} as manager"
+                    f"[TEAM] Team '{config['name']}' has no members. Skipping import"
                 )
-            config["manager"] = managers[0]["id"]
+                continue
+            elif len(managers) == 0:
+                logger.warning(
+                    f"[TEAM] Team '{config['name']}' has no managers, selecting {config['members'][0]} as manager"
+                )
+                config["manager"] = config["members"][0]
+            else:
+                if len(managers) > 1:
+                    logger.warning(
+                        f"[TEAM] Team '{config['name']}' has multiple managers, selecting {managers[0]['user']} as manager"
+                    )
+                config["manager"] = managers[0]["id"]
+            teams_config.append(config)
+        return teams_config
