@@ -5,10 +5,12 @@ logger = logging.getLogger(__name__)
 lfh = logging.FileHandler("{0}.log".format(__name__))
 logger.addHandler(lfh)
 
+
 def get_lir_role(pd_role):
-    if pd_role == 'admin':
-        return 'admin'
-    return 'responder'
+    if pd_role == "admin":
+        return "admin"
+    return "responder"
+
 
 class PagerDuty:
     def __init__(self, api_token):

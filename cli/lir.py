@@ -1,4 +1,3 @@
-from functools import reduce
 import requests
 import json
 import logging
@@ -25,7 +24,6 @@ class LIR:
         }
         self.session = requests.Session()
         self.session.headers.update(self.headers)
-        self.lir_teams = {}
 
     def post_request(self, url, payload):
         """Invokes a post request to LIR.
@@ -62,9 +60,7 @@ class LIR:
             logger.error(f"Encountered request error to url {url}: {e}")
             return (599, {"error": True, "message": e})
 
-
-    
-    def create_user(self, payload, pd_id):
+    def create_user(self, payload):
         """Convenience method for creating a user.
 
         Args:
@@ -73,12 +69,9 @@ class LIR:
         Returns:
             tuple: (status code, response json)
         """
-        # sysId = self.get_from_cache(pd_id)
-        # if sysId != "":
-        #     return (200, { "sysId": sysId })
         return self.post_request(f"{self.url}/api/now/ir/user", json.dumps(payload))
 
-    def create_team(self, payload, pd_id):
+    def create_team(self, payload):
         """Convenience method for creating a team.
 
         Args:
@@ -87,9 +80,6 @@ class LIR:
         Returns:
             tuple: (status code, response json)
         """
-        # sysId = self.get_from_cache(pd_id)
-        # if sysId != "":
-        #     return (200, { "sysId": sysId })
         return self.post_request(f"{self.url}/api/now/ir/team", json.dumps(payload))
 
     def create_service(self, payload):
@@ -126,68 +116,3 @@ class LIR:
         return self.post_request(
             f"{self.url}/api/now/ir/escalation_policy", json.dumps(payload)
         )
-
-    """
-        Get all teams migrated to LIR
-        {
-            count: ""
-            results: [{
-                "sysId",
-                "name",
-                "description",
-                "teamState"
-            }]
-        }
-    """
-    def get_teams(self):
-        """
-        Get teams created in LIR
-            query: Search string
-        Returns:
-            tuple: (status code, response json)
-        """
-        offset, limit = 0, 10
-        code, response = self.get_request(
-            f"{self.url}/api/now/ir/teams?offset={offset}&limit={limit}"
-        )
-        if response.error:
-            return (code, response)
-        teams = response.results
-        tot_results = response.count
-        offset += limit
-        while offset < tot_results:
-            response = self.get_request(
-                f"{self.url}/api/now/ir/teams?offset={offset}&limit={limit}"
-            )
-            teams.extend(response.results)
-            offset += limit
-        
-        for team in teams:
-            self.lir_teams[team["sysId"]] = team
-        return self.lir_teams
-    def get_users(self):
-        """
-        Get useres created in LIR
-
-        Returns:
-            tuple: (status code, response json)
-        """
-        offset, limit = 0, 10
-        code, response = self.get_request(
-            f"{self.url}/api/now/ir/teams?offset={offset}&limit={limit}"
-        )
-        teams = response.results
-        tot_results = response.count
-        offset += limit
-        while offset < tot_results:
-            response = self.get_request(
-                f"{self.url}/api/now/ir/teams?offset={offset}&limit={limit}"
-            )
-            teams.extend(response.results)
-            offset += limit
-        
-        for team in teams:
-            self.lir_teams[team["sysId"]] = team
-        return (code, self.lir_teams)
-        
-

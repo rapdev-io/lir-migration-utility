@@ -59,7 +59,9 @@ def test_main(mapper):
         ]
     )
     main(parsed_args)
-    mapper.assert_called_with("xyz987", "http://example.com", "abc123", noop=True)
+    mapper.assert_called_with(
+        "xyz987", "http://example.com", "abc123", noop=True, pretty=False
+    )
     mapper_instance.map_and_create_users.assert_called_once()
     mapper_instance.map_team_members.assert_called_once()
     mapper_instance.map_teams.assert_called_once()

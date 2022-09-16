@@ -83,7 +83,8 @@ in this code that may be unexpected and should be noted.
   duplicate of their first name (as first and last are required in LIR). For example,
   if a PagerDuty user is just "Joe", they will become "Joe Joe" in LIR.
 - If there are multiple managers for a PagerDuty team, one will be selected as the
-  manager of the LIR team. A team in LIR can only have one manager.
+  manager of the LIR team. A team in LIR can only have one manager. If a PagerDuty team does not have
+  a manager, one will be selected.
 - In LIR, a team should be associated with a service. If there is no team associated to
   a PagerDuty service, but the PagerDuty service has an escalation policy, a team
   will be inferred from the policy and assigned to the service in LIR. If a team

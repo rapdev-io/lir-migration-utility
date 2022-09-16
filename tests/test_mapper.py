@@ -47,7 +47,7 @@ def test_map_and_create_users(pd, lir, caplog):
     mapper.lir.create_user.assert_any_call(fd.lir_user_jane)
     assert mapper.users["abc123"] == "sysidabc123"
     assert (
-        '[USER] Created user for "john@example.com"; sysId "sysidabc123"'
+        '[USER] Created user for "john doe (john@example.com)"; sysId "sysidabc123"'
         in caplog.messages
     )
     assert (
@@ -138,18 +138,20 @@ def test_create_team_from_escal_policy(pd, lir, caplog):
     mapper.users = {"abc123": "sysIdabc123"}
     mapper.lir.create_team.side_effect = [(200, {"sysId": "foobar"})]
     resp = mapper.create_team_from_escal_policy("123", "test team policy")
-    assert resp == {"sysId": "foobar"}
+    assert resp == {"sysId": "foobar", "name": "test team policy (service based team)"}
     mapper.pd.get_details.assert_called_with("escalation_policies/123")
     mapper.lir.create_team.assert_called_with(
         {
             "members": ["sysIdabc123"],
             "teamState": "complete",
             "name": "test team policy (service based team)",
-            "description": "Team inferred from escalation policy of service 'test team policy'",
+            "description": 'Team inferred from escalation policy "test team policy (service based team)" of service "test team policy"',
+            "manager": "sysIdabc123",
+            "sysId": "foobar",
         }
     )
     assert (
-        '[TEAM] Created team "test team policy (service based team)" from escalation policy with sysId foobar'
+        '[TEAM] Created team "test team policy (service based team)" from escalation policy "test team policy (service based team)" with sysId foobar'
         in caplog.messages
     )
 
@@ -172,7 +174,8 @@ def test_create_team_from_escal_policy_error(pd, lir, caplog):
             "members": ["sysIdabc123"],
             "teamState": "complete",
             "name": "test team policy (service based team)",
-            "description": "Team inferred from escalation policy of service 'test team policy'",
+            "description": 'Team inferred from escalation policy "test team policy (service based team)" of service "test team policy"',
+            "manager": "sysIdabc123",
         }
     )
     assert (
@@ -197,7 +200,8 @@ def test_create_team_from_escal_policy_noop(pd, lir):
             "members": ["sysIdabc123"],
             "teamState": "complete",
             "name": "test team policy (service based team)",
-            "description": "Team inferred from escalation policy of service 'test team policy'",
+            "description": 'Team inferred from escalation policy "test team policy (service based team)" of service "test team policy"',
+            "manager": "sysIdabc123",
             "sysId": "noop - 123 test team policy",
         }
     }
@@ -301,7 +305,9 @@ def test_create_team_from_schedule(pd, lir, caplog):
             "members": ["abc123", "xyz789"],
             "teamState": "complete",
             "name": "test schedule 0 (schedule based team)",
-            "description": "Team inferred from members of schedule test schedule 0",
+            "description": 'Team inferred from members of schedule "test schedule 0"',
+            "manager": "abc123",
+            "sysId": "abc123",
         }
     )
     mapper.lir.create_team.assert_any_call(
@@ -309,15 +315,16 @@ def test_create_team_from_schedule(pd, lir, caplog):
             "members": ["abc123", "xyz789"],
             "teamState": "complete",
             "name": "test schedule 1 (schedule based team)",
-            "description": "Team inferred from members of schedule test schedule 1",
+            "description": 'Team inferred from members of schedule "test schedule 1"',
+            "manager": "abc123",
         }
     )
     assert (
-        '[TEAM] Created team "test schedule 0 (schedule based team)" from schedule with sysId abc123'
+        '[TEAM] Created team "test schedule 0 (schedule based team)" from schedule "test schedule 0" with sysId abc123'
         in caplog.messages
     )
     assert (
-        '[TEAM] Attempted to create team from schedule test schedule 1; received response code 599 and error message "this is an error"'
+        '[TEAM] Attempted to create team from schedule "test schedule 1"; received response code 599 and error message "this is an error"'
         in caplog.messages
     )
 
@@ -333,14 +340,16 @@ def test_create_team_from_schedule_noop(pd, lir, caplog):
             "members": ["abc123", "xyz789"],
             "teamState": "complete",
             "name": "test schedule 0 (schedule based team)",
-            "description": "Team inferred from members of schedule test schedule 0",
+            "description": 'Team inferred from members of schedule "test schedule 0"',
+            "manager": "abc123",
             "sysId": "noop - abc123 test schedule 0",
         },
         "noop - abc123 test schedule 1": {
             "members": ["abc123", "xyz789"],
             "teamState": "complete",
             "name": "test schedule 1 (schedule based team)",
-            "description": "Team inferred from members of schedule test schedule 1",
+            "description": 'Team inferred from members of schedule "test schedule 1"',
+            "manager": "abc123",
             "sysId": "noop - abc123 test schedule 1",
         },
     }
@@ -374,11 +383,11 @@ def test_map_schedules(pd, lir, caplog):
     mapper.map_schedules()
     assert mapper.shifts == fd.rendered_shifts
     assert (
-        '[TEAM] Created team "test schedule 0 (schedule based team)" from schedule with sysId sysIdabc123'
+        '[TEAM] Created team "test schedule 0 (schedule based team)" from schedule "test schedule 0" with sysId sysIdabc123'
         in caplog.messages
     )
     assert (
-        '[SHIFT] Created shift "test schedule 0" with sysId "sysIdabc123"'
+        '[SHIFT] Created shift "test schedule 0 (test schedule 0 (schedule based team)) - layer 0" with sysId "sysIdabc123"'
         in caplog.messages
     )
     assert (
@@ -386,13 +395,13 @@ def test_map_schedules(pd, lir, caplog):
         in caplog.messages
     )
     assert (
-        '[SHIFT] Attempted to create shift "test schedule 1"; received response code 599 and error "this is an error"'
+        '[SHIFT] Attempted to create shift "test schedule 1 (test schedule 1 (schedule based team)) - layer 0"; received response code 599 and error "this is an error"'
         in caplog.messages
     )
     mapper.lir.create_shift.assert_any_call(
         {
             "name": "test schedule 0 (test schedule 0 (schedule based team)) - layer 0",
-            "team": {"id": "sysIdabc123"},
+            "team": "sysIdabc123",
             "startTime": "21:00",
             "startDate": "2015-11-06",
             "endTime": "09:00",
@@ -406,7 +415,7 @@ def test_map_schedules(pd, lir, caplog):
     mapper.lir.create_shift.assert_any_call(
         {
             "name": "test schedule 1 (test schedule 1 (schedule based team)) - layer 0",
-            "team": {"id": "sysIdabc123"},
+            "team": "sysIdabc123",
             "startTime": "21:00",
             "startDate": "2015-11-06",
             "endTime": "09:00",
@@ -508,7 +517,6 @@ def test_noop_output(pd, lir, _print):
     mapper.shifts = {"abc123": {"test": "shift"}}
     mapper.escalations = {"abc123": {"test": "escalation"}}
     mapper.noop_output()
-    _print.assert_any_call("PD User ID: abc123 LIR User: testuser")
     _print.assert_any_call({"foo": "bar"})
     _print.assert_any_call({"service1": "example"})
     _print.assert_any_call({"test": "shift"})
