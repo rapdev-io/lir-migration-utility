@@ -50,16 +50,6 @@ class LIR:
             logger.error(f"Encountered request error to url {url}: {e}")
             return (599, {"error": True, "message": e})
 
-    def get_request(self, url, params):
-        try:
-            logger.debug(f"Sending GET request to {url} with params: {params}")
-            response = self.session.get(url, params=params)
-            logger.debug(f"GET request to {url} returned code {response.status_code}")
-            return response.status_code, response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Encountered request error to url {url}: {e}")
-            return (599, {"error": True, "message": e})
-
     def create_user(self, payload):
         """Convenience method for creating a user.
 

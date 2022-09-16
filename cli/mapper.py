@@ -1,4 +1,3 @@
-from functools import reduce
 from .lir import LIR
 from .pagerduty import PagerDuty
 from dateutil.parser import parse
