@@ -102,7 +102,7 @@ def test_get_all_escalations(session):
 @patch("cli.pagerduty.APISession")
 def test_get_team_members(session):
     pd = PagerDuty("abc132")
-    pd.teams = [{"id": "abc123", "name": "test team"}]
+    teams = [{"id": "abc123", "name": "test team"}]
     pd.session.rget.side_effect = [
         [
             {"user": {"id": "xyz789"}, "role": "manager"},
@@ -111,8 +111,8 @@ def test_get_team_members(session):
         fd.users[1],
         fd.users[0],
     ]
-    pd.get_team_members()
-    assert pd.teams == [
+    output = pd.get_team_members(teams)
+    assert output == [
         {
             "id": "abc123",
             "name": "test team",

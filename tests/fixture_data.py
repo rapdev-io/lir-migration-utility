@@ -192,7 +192,7 @@ rendered_shifts = {
     "abc123": [
         {
             "name": "test schedule 1 (test schedule 1 (schedule based team)) - layer 0",
-            "team": {"id": "sysIdabc123"},
+            "team": "sysIdabc123",
             "startTime": "21:00",
             "startDate": "2015-11-06",
             "endTime": "09:00",
@@ -231,7 +231,8 @@ team_from_escalation = {
                 }
             ],
         }
-    ]
+    ],
+    "name": "test team policy (service based team)",
 }
 
 escalations = [

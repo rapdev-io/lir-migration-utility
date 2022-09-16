@@ -6,11 +6,14 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
+lfh = logging.FileHandler("{0}.log".format(__name__))
+logger.addHandler(lfh)
 
 
 class Mapper:
     def __init__(self, lirtoken, url, api_token, noop=False, pretty=False):
         self.users = {}
+        self.mapped_pd_users = []
         self.team_members = {}
         self.teams = {}
         self.services = {}
@@ -22,9 +25,32 @@ class Mapper:
         self.pd = PagerDuty(api_token)
         self.rotation = {604800: "weekly", 86400: "daily"}
 
+    def __set_manager_users(self, pd_users, pd_teams):
+        """
+        Some of the users are selected as managers while configuring PD team.
+        This could happend if teams have no managers. Set manager role to these users
+        """
+        user_map = {}
+        for user in pd_users:
+            user_map[user["id"]] = user
+            emailAddress = user["emailAddress"].split("@")
+            user["emailAddress"] = emailAddress[0] + "@" + emailAddress[1]
+        team_managers = map(lambda team: team["manager"], pd_teams)
+        for team_manager in team_managers:
+            if team_manager in user_map:
+                user_map[team_manager]["role"] = "manager"
+                print(
+                    f'[USER] Assigning manager role to user "{user_map[team_manager]["emailAddress"]}"'
+                )
+        mapped_pd_users = []
+        for user in user_map.values():
+            mapped_pd_users.append(user)
+        return mapped_pd_users
+
     def map_and_create_users(self):
         """Create a user from PagerDuty in LIR, or a mock user if in noop mode."""
-        for user in self.pd.users:
+        self.mapped_pd_users = self.__set_manager_users(self.pd.users, self.pd.teams)
+        for user in self.mapped_pd_users:
             pd_id = user.pop("id")
             if self.noop:
                 self.users[pd_id] = f"noop - pd user {user['emailAddress']}"
@@ -48,14 +74,15 @@ class Mapper:
             self.team_members[pd_id]["members"] = []
             self.team_members[pd_id]["manager"] = self.users.get(team["manager"])
             for member in team["members"]:
-                self.team_members[pd_id]["members"].append(self.users.get(member))
+                if member in self.users:
+                    self.team_members[pd_id]["members"].append(self.users.get(member))
 
     def map_teams(self):
         """Create a team from PagerDuty in LIR, or a mock team if in noop mode."""
         for team in self.pd.teams:
             team_id = team.pop("id")
-            team["members"] = self.team_members.get(team_id).get("members")
-            team["manager"] = self.team_members.get(team_id).get("manager")
+            team["members"] = self.team_members.get(team_id, {}).get("members", [])
+            team["manager"] = self.team_members.get(team_id, {}).get("manager", "")
             team["teamState"] = "complete"
             if self.noop:
                 team["name"] = f"noop - {team['name']}"
@@ -93,22 +120,27 @@ class Mapper:
         escal = self.pd.get_details(f"escalation_policies/{escal_id}")
         for rule in escal["escalation_rules"]:
             for target in rule["targets"]:
-                if target["type"] == "user_reference":
+                t_user_id = target["id"]
+                if target["type"] == "user_reference" and t_user_id in self.users:
                     members.append(self.users.get(target["id"]))
         team_name = f"{name} (service based team)"
+        if len(members) == 0:
+            logger.info(
+                f'Skipping escalation-policy team creation since there are no users in it "{name}"(service based team)'
+            )
+            return None
         payload = {
             "members": members,
             "teamState": "complete",
             "name": team_name,
             "description": f'Team inferred from escalation policy "{escal["name"]}" of service "{name}"',
+            "manager": members[0],
         }
         if self.noop:
             payload["sysId"] = f"noop - {escal_id} {name}"
             self.teams[f"{escal_id} {name}"] = payload
         else:
             code, json = self.lir.create_team(payload)
-            payload["sysId"] = json["sysId"]
-            self.teams[json["sysId"]] = payload
             if "error" in json:
                 logger.error(
                     f'[TEAM] Attempted to create team for service "{name}"; received response code {code} and error message "{json["message"]}"'
@@ -117,6 +149,9 @@ class Mapper:
             logger.info(
                 f'[TEAM] Created team "{team_name}" from escalation policy "{escal["name"]}" with sysId {json["sysId"]}'
             )
+
+            payload["sysId"] = json["sysId"]
+            self.teams[json["sysId"]] = payload
             json["name"] = team_name
             return json
 
@@ -124,62 +159,74 @@ class Mapper:
         """Create a service from PagerDuty in LIR, or a mock service if in noop mode."""
         for service in self.pd.services:
             service_teams = service.pop("teams")
-            if not service_teams:
-                service_details = self.pd.get_details(f"services/{service['id']}")
-                if service_details.get("escalation_policy", {}).get("id"):
-                    resp = self.create_team_from_escal_policy(
-                        service_details["escalation_policy"]["id"], service["name"]
-                    )
-                    if resp:
-                        for escal in self.pd.escalations:
-                            if (
-                                escal["id"]
-                                == service_details["escalation_policy"]["id"]
-                            ):
-                                escal["teams"].append(
-                                    {"id": resp["sysId"], "name": resp["name"]}
-                                )
-                        self.escalations[
-                            service_details["escalation_policy"]["id"]
-                        ] = resp["sysId"]
+            try:
+                if not service_teams:
+                    service_details = self.pd.get_details(f"services/{service['id']}")
+                    if service_details.get("escalation_policy", {}).get("id"):
+                        resp = self.create_team_from_escal_policy(
+                            service_details["escalation_policy"]["id"], service["name"]
+                        )
+                        if resp:
+                            for escal in self.pd.escalations:
+                                if (
+                                    escal["id"]
+                                    == service_details["escalation_policy"]["id"]
+                                ):
+                                    escal["teams"].append(
+                                        {"id": resp["sysId"], "name": resp["name"]}
+                                    )
+                            self.escalations[
+                                service_details["escalation_policy"]["id"]
+                            ] = resp["sysId"]
+                            self.services[service["id"]] = {
+                                "name": f"{service['name']}",
+                                "description": service["description"],
+                                "team": resp["sysId"],
+                            }
+                    else:
+                        logger.info(
+                            f'[SERVICE] There is no escalation policy associated with service "{service["name"]}" - cannot infer team members. Creating service without team.'
+                        )
                         self.services[service["id"]] = {
-                            "name": f"{service['name']}",
+                            "name": f"{service['name']} (No Team Assigned)",
                             "description": service["description"],
-                            "team": resp["sysId"],
                         }
-                else:
-                    logger.info(
-                        f'[SERVICE] There is no escalation policy associated with service "{service["name"]}" - cannot infer team members. Creating service without team.'
-                    )
+                for team in service_teams:
                     self.services[service["id"]] = {
-                        "name": f"{service['name']} (No Team Assigned)",
+                        "name": f"{service['name']} ({self.teams.get(team['id'], {}).get('name', '')})",
+                        "team": self.teams.get(team["id"], {}).get("sysId", ""),
                         "description": service["description"],
                     }
-            for team in service_teams:
-                self.services[service["id"]] = {
-                    "name": f"{service['name']} ({self.teams.get(team['id']).get('name')})",
-                    "team": self.teams.get(team["id"]).get("sysId"),
-                    "description": service["description"],
-                }
-            if not self.noop:
-                code, json = self.lir.create_service(self.services[service["id"]])
-                if "error" in json:
-                    logger.error(
-                        f'[SERVICE] Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
+                if service["id"] not in self.services:
+                    self.services[service["id"]] = {
+                        "name": f"{service['name']}",
+                        "description": service["description"],
+                    }
+                if not self.noop:
+                    code, json = self.lir.create_service(self.services[service["id"]])
+                    if "error" in json:
+                        logger.error(
+                            f'[SERVICE] Attempted to create service "{service["name"]}"; received response code {code} and error message "{json["message"]}"'
+                        )
+                        continue
+                    logger.info(
+                        f'[SERVICE] Created service "{service["name"]}" with sysId {json["sysId"]}"'
                     )
-                    continue
-                logger.info(
-                    f'[SERVICE] Created service "{service["name"]}" with sysId {json["sysId"]}"'
+            except Exception:
+                logger.error(
+                    f'[SERVICE] Exception occured while creating services "{service["name"]}"'
                 )
 
     def create_team_from_schedule(self, schedule):
         if "primaryMembers" in schedule and schedule["primaryMembers"]:
             team_name = f"{schedule['name']} (schedule based team)"
+            members = schedule["primaryMembers"]
             payload = {
                 "members": schedule["primaryMembers"],
                 "teamState": "complete",
                 "name": team_name,
                 "description": f'Team inferred from members of schedule "{schedule["name"]}"',
+                "manager": members[0],
             }
             if self.noop:
                 payload["sysId"] = f"noop - {schedule['id']} {schedule['name']}"
@@ -218,7 +265,7 @@ class Mapper:
             for team in sched["teams"]:
                 for layer in sched["schedule_layers"]:
                     sched_index = 0
-                    if layer["restrictions"]:
+                    if layer.get("restrictions"):
                         has_restrictions = True
                         restrictions = []
                         for restr in layer["restrictions"]:
@@ -283,8 +330,15 @@ class Mapper:
                                     }
                                 )
                         for restr in restrictions:
+                            primaryMembers = []
+                            for user in layer.get("users", []):
+                                userId = self.users.get(user["user"]["id"])
+                                if userId in self.teams.get(team["id"], {}).get(
+                                    "members", []
+                                ):
+                                    primaryMembers.append(userId)
                             schedule = {
-                                "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
+                                "name": f"{sched['name']} ({self.teams.get(team['id'], {}).get('name', '')}) - layer {sched_index}",
                                 "team": self.teams.get(team["id"], {}).get(
                                     "sysId", team
                                 ),
@@ -306,12 +360,7 @@ class Mapper:
                                 ),
                                 "days": restr["days"],
                                 "timeZone": sched["timeZone"],
-                                "primaryMembers": [
-                                    self.users.get(user["user"]["id"])
-                                    for user in layer["users"]
-                                    if self.users.get(user["user"]["id"])
-                                    in self.teams.get(team["id"])["members"]
-                                ],
+                                "primaryMembers": primaryMembers,
                                 # We can't fill this in, but the API requires it
                                 "backupMembers": [],
                             }
@@ -319,8 +368,15 @@ class Mapper:
                             self.shifts[sched["id"]].append(schedule)
                             schedules.append(schedule)
                     else:
+                        primaryMembers = []
+                        for user in layer.get("users", []):
+                            userId = self.users.get(user["user"]["id"])
+                            if userId in self.teams.get(team["id"], {}).get(
+                                "members", []
+                            ):
+                                primaryMembers.append(userId)
                         schedule = {
-                            "name": f"{sched['name']} ({self.teams.get(team['id'])['name']}) - layer {sched_index}",
+                            "name": f"{sched['name']} ({self.teams.get(team['id'], {}).get('name', '')}) - layer {sched_index}",
                             "team": self.teams.get(team["id"], {}).get("sysId", team),
                             "startTime": parse(layer["start"]).strftime("%H:%M"),
                             "startDate": parse(layer["start"]).strftime("%Y-%m-%d"),
@@ -338,12 +394,7 @@ class Mapper:
                                 layer["rotation_turn_length_seconds"], "weekly"
                             ),
                             "timeZone": sched["timeZone"],
-                            "primaryMembers": [
-                                self.users.get(user["user"]["id"])
-                                for user in layer["users"]
-                                if self.users.get(user["user"]["id"])
-                                in self.teams.get(team["id"])["members"]
-                            ],
+                            "primaryMembers": primaryMembers,
                             # We can't fill this in, but the API requires it
                             "backupMembers": [],
                         }
@@ -378,7 +429,7 @@ class Mapper:
             for team in escal["teams"]:
                 escalation = {}
                 steps = []
-                escalation["team"] = self.teams.get(team["id"])["sysId"]
+                escalation["team"] = self.teams.get(team["id"], {}).get("sysId", "")
                 rule_index = 0
                 for rule in escal["rules"]:
                     step = {}
@@ -436,7 +487,7 @@ class Mapper:
     def noop_output(self):
         """Print a noop report to console."""
         print("\nWould create the following users:\n----------")
-        for pd_user in self.pd.users:
+        for pd_user in self.mapped_pd_users:
             if self.pretty:
                 print(json.dumps(pd_user, indent=4))
             else:

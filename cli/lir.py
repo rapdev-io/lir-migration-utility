@@ -3,6 +3,8 @@ import json
 import logging
 
 logger = logging.getLogger(__name__)
+lfh = logging.FileHandler("{0}.log".format(__name__))
+logger.addHandler(lfh)
 
 
 class LIR:
